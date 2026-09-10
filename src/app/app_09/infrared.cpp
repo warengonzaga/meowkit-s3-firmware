@@ -1517,8 +1517,8 @@ namespace MOONCAKE::APPS
             /* Preserve the exact decoder value used by IRremoteESP8266.
              * Flipper's address/command fields are not sufficient to
              * reconstruct it for every protocol. */
-            f.printf("value: 0x%llX\n", sig.value);
-            f.printf("bits: %u\n", sig.bits);
+            f.printf("value: 0x%llX\n", (unsigned long long)sig.value);
+            f.printf("bits: %u\n", (unsigned)sig.bits);
 
             char addrBuf[32], cmdBuf[32];
             int nbytes = (sig.bits + 7) / 8;
@@ -1567,6 +1567,7 @@ namespace MOONCAKE::APPS
         resetSig(sig);
         bool inSignal = false;
         bool hasSerializedValue = false;
+        bool hasSerializedBits = false;
         String line;
 
         while (f.available()) {
@@ -1586,6 +1587,7 @@ namespace MOONCAKE::APPS
                 }
                 resetSig(sig);
                 hasSerializedValue = false;
+                hasSerializedBits = false;
                 strncpy(sig.name, line.c_str() + 6, sizeof(sig.name) - 1);
                 sig.name[sizeof(sig.name) - 1] = '\0';
                 inSignal = true;
@@ -1606,15 +1608,21 @@ namespace MOONCAKE::APPS
             }
             else if (line.startsWith("bits: ")) {
                 sig.bits = line.substring(6).toInt();
+                hasSerializedBits = true;
             }
             else if (line.startsWith("address: ")) {
                 sig.address = parseHexBytes(line.c_str() + 9);
             }
             else if (line.startsWith("command: ")) {
                 sig.command = parseHexBytes(line.c_str() + 9);
-                if (!sig.isRaw && !hasSerializedValue) {
-                    sig.bits = 32;
-                    sig.value = ((uint64_t)sig.address) | ((uint64_t)sig.command << 16);
+                if (!sig.isRaw) {
+                    /* Only reconstruct the fields that weren't serialized
+                     * directly — a file may carry a real "bits:" value
+                     * without a "value:" field (or vice versa), so each
+                     * fallback must be guarded independently to avoid
+                     * clobbering data that was actually round-tripped. */
+                    if (!hasSerializedBits) sig.bits = 32;
+                    if (!hasSerializedValue) sig.value = ((uint64_t)sig.address) | ((uint64_t)sig.command << 16);
                 }
             }
             else if (line.startsWith("frequency: ")) {
