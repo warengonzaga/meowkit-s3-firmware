@@ -1514,6 +1514,11 @@ namespace MOONCAKE::APPS
         } else {
             f.println("type: parsed");
             f.printf("protocol: %s\n", typeToFlipperProto(sig.protocol));
+            /* Preserve the exact decoder value used by IRremoteESP8266.
+             * Flipper's address/command fields are not sufficient to
+             * reconstruct it for every protocol. */
+            f.printf("value: 0x%llX\n", sig.value);
+            f.printf("bits: %u\n", sig.bits);
 
             char addrBuf[32], cmdBuf[32];
             int nbytes = (sig.bits + 7) / 8;
@@ -1561,6 +1566,7 @@ namespace MOONCAKE::APPS
         IrSignal sig;
         resetSig(sig);
         bool inSignal = false;
+        bool hasSerializedValue = false;
         String line;
 
         while (f.available()) {
@@ -1579,6 +1585,7 @@ namespace MOONCAKE::APPS
                     }
                 }
                 resetSig(sig);
+                hasSerializedValue = false;
                 strncpy(sig.name, line.c_str() + 6, sizeof(sig.name) - 1);
                 sig.name[sizeof(sig.name) - 1] = '\0';
                 inSignal = true;
@@ -1593,12 +1600,19 @@ namespace MOONCAKE::APPS
                 proto.trim();
                 sig.protocol = flipperProtoToType(proto.c_str());
             }
+            else if (line.startsWith("value: ")) {
+                sig.value = strtoull(line.c_str() + 7, nullptr, 0);
+                hasSerializedValue = true;
+            }
+            else if (line.startsWith("bits: ")) {
+                sig.bits = line.substring(6).toInt();
+            }
             else if (line.startsWith("address: ")) {
                 sig.address = parseHexBytes(line.c_str() + 9);
             }
             else if (line.startsWith("command: ")) {
                 sig.command = parseHexBytes(line.c_str() + 9);
-                if (!sig.isRaw) {
+                if (!sig.isRaw && !hasSerializedValue) {
                     sig.bits = 32;
                     sig.value = ((uint64_t)sig.address) | ((uint64_t)sig.command << 16);
                 }
