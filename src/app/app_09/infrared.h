@@ -48,8 +48,13 @@ namespace MOONCAKE::APPS
         MainMenu,
         LearnWait,
         LearnResult,
+        LearnSaveLocation,
+        LearnSaveFolderPicker,
+        LearnSaveFolderName,
         LearnSaveName,
+        LearnSaveExistingConfirm,
         RemoteList,
+        DeleteConfirm,
         RemoteView,
         UniversalMenu,
         UniversalTV,
@@ -104,10 +109,20 @@ namespace MOONCAKE::APPS
 
         void _enterLearnSaveName();
         void _runLearnSaveName();
+        void _enterLearnSaveLocation();
+        void _runLearnSaveLocation();
+        void _enterLearnSaveFolderPicker();
+        void _runLearnSaveFolderPicker();
+        void _enterLearnSaveFolderName();
+        void _runLearnSaveFolderName();
+        void _enterLearnSaveExistingConfirm();
+        void _runLearnSaveExistingConfirm();
 
         void _enterRemoteList();
         void _runRemoteList();
         void _goUpRemoteDir();
+        void _enterDeleteConfirm();
+        void _runDeleteConfirm();
 
         void _enterRemoteView();
         void _runRemoteView();
@@ -131,7 +146,8 @@ namespace MOONCAKE::APPS
         bool _loadRemote(const char* path, IrRemote& remote, int maxSignals = 0, const char* filterName = nullptr);
         bool _saveSignalToFile(const char* dir, const char* remoteName, const IrSignal& sig);
         bool _appendSignalToFile(const char* path, const IrSignal& sig);
-        void _listIrFiles(const char* dir, std::vector<String>& out);
+        void _listIrFiles(const char* dir, std::vector<String>& out, bool includeFolders = false);
+        bool _isDirectoryEmpty(const char* path);
 
         /* ── IR hardware ── */
         IRrecv*  _irRecv  = nullptr;
@@ -150,6 +166,11 @@ namespace MOONCAKE::APPS
         IrRemote  _currentRemote;
         std::vector<String> _fileList;
         char      _remoteDir[96];   /* current folder being browsed in Saved Remotes, e.g. "/infrared" or "/infrared/tv" */
+        char      _saveDir[96];     /* destination for a learned signal */
+        char      _savePickerDir[96];
+        char      _savePath[128];
+        char      _deletePath[128];
+        bool      _deleteFolder = false;
 
         /* save-name editor */
         char _editBuf[24];
@@ -187,4 +208,3 @@ namespace MOONCAKE::APPS
         uint32_t    _sendStart = 0;
     };
 }
-
