@@ -241,6 +241,8 @@ namespace MOONCAKE::APPS
         _learnedSig.address   = 0;
         _learnedSig.command   = 0;
         _learnedSig.frequency = 38000;
+        _learnedSig.dutyCycle = 0.33f;
+        _learnedSig.isSupported = true;
         _learnedSig.rawData.clear();
 
         _currentRemote.filename[0] = '\0';
@@ -498,6 +500,8 @@ namespace MOONCAKE::APPS
             _learnedSig.address   = 0;
             _learnedSig.command   = 0;
             _learnedSig.frequency = 38000;
+            _learnedSig.dutyCycle = 0.33f;
+            _learnedSig.isSupported = true;
             strncpy(_learnedSig.name, "Signal", sizeof(_learnedSig.name) - 1);
 
             if (results.decode_type != UNKNOWN && results.decode_type != (decode_type_t)(-1)) {
@@ -575,8 +579,8 @@ namespace MOONCAKE::APPS
             return;
         }
         if (_device->button.A.pressed()) {
-            _txSignal(_learnedSig);
-            hp::drawToast(_device->Lcd, "SENT", hp::COL_FG);
+            bool sent = _txSignal(_learnedSig);
+            hp::drawToast(_device->Lcd, sent ? "SENT" : "UNSUPPORTED", sent ? hp::COL_FG : hp::COL_ERR);
             delay(300);
             _sceneDirty = true;
         }
@@ -906,8 +910,8 @@ namespace MOONCAKE::APPS
 
         if (_device->button.A.pressed()) {
             int idx = _menuSel + _scrollOffset;
-            _txSignal(_currentRemote.signals[idx]);
-            hp::drawToast(_device->Lcd, "SENT", hp::COL_FG);
+            bool sent = _txSignal(_currentRemote.signals[idx]);
+            hp::drawToast(_device->Lcd, sent ? "SENT" : "UNSUPPORTED", sent ? hp::COL_FG : hp::COL_ERR);
             delay(200);
             _sceneDirty = true;
         }
@@ -1465,18 +1469,31 @@ namespace MOONCAKE::APPS
         }
     }
 
-    void App09::_txSignal(const IrSignal& sig)
+    bool App09::_txSignal(const IrSignal& sig)
     {
-        if (!_irSend) return;
+        if (!_irSend || !sig.isSupported) return false;
 
-        if (sig.isRaw) {
-            if (!sig.rawData.empty()) {
-                _irSend->sendRaw(sig.rawData.data(), sig.rawData.size(),
-                                 sig.frequency / 1000);
+        if (!sig.isRaw) return _irSend->send(sig.protocol, sig.value, sig.bits);
+        if (sig.rawData.empty()) return false;
+
+        int duty = static_cast<int>(sig.dutyCycle * 100.0f + 0.5f);
+        if (duty < 1) duty = 1;
+        if (duty > 99) duty = 99;
+        _irSend->enableIROut(sig.frequency, static_cast<uint8_t>(duty));
+
+        for (size_t i = 0; i < sig.rawData.size(); i++) {
+            uint32_t duration = sig.rawData[i];
+            if (i & 1) {
+                _irSend->space(duration);
+            } else {
+                while (duration > UINT16_MAX) {
+                    _irSend->mark(UINT16_MAX);
+                    duration -= UINT16_MAX;
+                }
+                _irSend->mark(static_cast<uint16_t>(duration));
             }
-        } else {
-            _irSend->send(sig.protocol, sig.value, sig.bits);
         }
+        return true;
     }
 
     /* ════════════════════════════════════════════════════════════
@@ -1568,7 +1585,7 @@ namespace MOONCAKE::APPS
         if (sig.isRaw) {
             f.println("type: raw");
             f.printf("frequency: %lu\n", sig.frequency);
-            f.println("duty_cycle: 0.330000");
+            f.printf("duty_cycle: %.6f\n", static_cast<double>(sig.dutyCycle));
             f.print("data:");
             for (size_t i = 0; i < sig.rawData.size(); i++) {
                 f.printf(" %u", sig.rawData[i]);
@@ -1579,9 +1596,7 @@ namespace MOONCAKE::APPS
             f.printf("protocol: %s\n", typeToFlipperProto(sig.protocol));
 
             char addrBuf[32], cmdBuf[32];
-            int nbytes = (sig.bits + 7) / 8;
-            if (nbytes < 2) nbytes = 2;
-            if (nbytes > 4) nbytes = 4;
+            constexpr int nbytes = 4;
             formatHexBytes(sig.address, nbytes, addrBuf, sizeof(addrBuf));
             formatHexBytes(sig.command, nbytes, cmdBuf, sizeof(cmdBuf));
             f.printf("address: %s\n", addrBuf);
@@ -1619,11 +1634,15 @@ namespace MOONCAKE::APPS
             s.address   = 0;
             s.command   = 0;
             s.frequency = 38000;
+            s.dutyCycle = 0.33f;
+            s.isSupported = true;
         };
 
         IrSignal sig;
         resetSig(sig);
         bool inSignal = false;
+        bool validFiletype = false;
+        bool validVersion = false;
         String line;
 
         while (f.available()) {
@@ -1634,7 +1653,17 @@ namespace MOONCAKE::APPS
             line = f.readStringUntil('\n');
             line.trim();
 
-            if (line.startsWith("name: ")) {
+            if (line.startsWith("Filetype: ")) {
+                String type = line.substring(10);
+                type.trim();
+                validFiletype = (type == "IR signals file" || type == "IR library file");
+            }
+            else if (line.startsWith("Version: ")) {
+                String version = line.substring(9);
+                version.trim();
+                validVersion = (version == "1");
+            }
+            else if (line.startsWith("name: ")) {
                 if (inSignal) {
                     /* When filtering, only keep signals whose name matches. */
                     if (!filterName || strcasecmp(sig.name, filterName) == 0) {
@@ -1655,6 +1684,7 @@ namespace MOONCAKE::APPS
                 String proto = line.substring(10);
                 proto.trim();
                 sig.protocol = flipperProtoToType(proto.c_str());
+                sig.isSupported = (sig.protocol != UNKNOWN);
             }
             else if (line.startsWith("address: ")) {
                 sig.address = parseHexBytes(line.c_str() + 9);
@@ -1669,18 +1699,30 @@ namespace MOONCAKE::APPS
             else if (line.startsWith("frequency: ")) {
                 sig.frequency = line.substring(11).toInt();
             }
+            else if (line.startsWith("duty_cycle: ")) {
+                sig.dutyCycle = line.substring(12).toFloat();
+            }
             else if (line.startsWith("data: ")) {
                 const char* p = line.c_str() + 6;
                 while (*p) {
                     while (*p == ' ') p++;
                     if (!*p) break;
                     char* end;
-                    long val = strtol(p, &end, 10);
-                    if (end == p) break;
-                    sig.rawData.push_back((uint16_t)val);
+                    unsigned long val = strtoul(p, &end, 10);
+                    if (end == p || sig.rawData.size() >= 1024) {
+                        sig.isSupported = false;
+                        break;
+                    }
+                    sig.rawData.push_back(static_cast<uint32_t>(val));
                     p = end;
                 }
             }
+        }
+
+        if (!validFiletype || !validVersion) {
+            remote.signals.clear();
+            f.close();
+            return false;
         }
 
         if (inSignal) {
